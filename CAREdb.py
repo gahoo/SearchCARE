@@ -1,6 +1,7 @@
 #! /usr/bin/env python
 #coding=utf-8
 import os
+import sqlite3
 from sqlitedb import sqlitedb
 
 class CAREdb(sqlitedb):
@@ -49,28 +50,69 @@ class CAREdb(sqlitedb):
             REF_Organism INTEGER REFERENCES Organism(id),
             Description VARCHAR(120),
             REF_Accession INTEGER REFERENCES Accession(id),
-            Sequence VARCHAR(100) NOT NULL)
-        """]
+            REF_MotifSeq  INTEGER REFERENCES MotifSeq(id))
+        """,
+        """
+        CREATE TABLE MotifSeq (
+            id INTEGER PRIMARY KEY,
+            Sequence VARCHAR(120) NOT NULL)
+        """,
+        """
+        CREATE TABLE Scanned (
+            id INTEGER PRIMARY KEY,
+            REF_SeqName INTEGER REFERENCES fa_file(id),
+            REF_MotifSeq INTEGER REFERENCES MotifSeq(id),
+            start INTEGER NOT NULL,
+            stop INTEGER NOT NULL,
+            strand BOOLEAN NOT NULL,
+            pValue REAL NOT NULL,
+            REF_FoundMotif INTEGER REFERENCES FoundMotif(id))
+        """,
+        """
+        CREATE TABLE fa_file (
+            id INTEGER PRIMARY KEY,
+            SeqName VARCHAR(20))
+        """,
+        """
+        CREATE TABLE FoundMotif (
+            id INTEGER PRIMARY KEY,
+            FoundMotif VARCHAR(120) NOT NULL)
+        """
+        ]
 
     views=[
     """
     CREATE VIEW Main AS
     SELECT Motif,Type,Organism,Motif.Description,Accession,Sequence
-    FROM Instance,Motif,Organism,Accession
+    FROM Instance,Motif,Organism,Accession,MotifSeq
     WHERE Motif.id=Instance.REF_Motif
-    AND Organism.id=Instance.REF_Organism
-    AND Accession.id=Instance.REF_Accession
+        AND Organism.id=Instance.REF_Organism
+        AND Accession.id=Instance.REF_Accession
+        AND MotifSeq.id=Instance.REF_MotifSeq
     """,
     """
     CREATE VIEW Motif_Seq AS
     SELECT DISTINCT Motif,Sequence
-    FROM Instance,Motif
+    FROM Instance,Motif,MotifSeq
     WHERE Motif.id=Instance.REF_Motif
+        AND MotifSeq.id=Instance.REF_MotifSeq
+    """,
+    """
+    CREATE VIEW ScannedMotif AS
+    SELECT SeqName,Sequence AS MotifSeq,start,stop,strand,pValue,FoundMotif
+    FROM Scanned,MotifSeq,fa_file,FoundMotif
+    WHERE fa_file.id=Scanned.REF_SeqName
+        AND MotifSeq.id=Scanned.REF_MotifSeq
+        AND FoundMotif.id=Scanned.REF_FoundMotif
     """]
 
     Accession={}
     Organism={}
     Motif={}
+    MotifSeq={}
+    SeqName={}
+    FoundMotif={}
+
 
     def __init__(self, dbfile):
         '''
@@ -124,9 +166,13 @@ class CAREdb(sqlitedb):
                 ['Accession'], \
                 [CARE[3]], \
                 self.Accession, 0)
+                REF_MotifSeq=self.addEntry('MotifSeq', \
+                    ['Sequence'], \
+                    [CARE[4]], \
+                    self.MotifSeq, 0)
                 self.addEntry('Instance', \
-                ['REF_Motif', 'Type', 'REF_Organism', 'Description', 'REF_Accession', 'Sequence'], \
-                [REF_Motif, CARE[1], REF_Organism, CARE[2], REF_Accession, CARE[4]])
+                ['REF_Motif', 'Type', 'REF_Organism', 'Description', 'REF_Accession', 'REF_MotifSeq'], \
+                [REF_Motif, CARE[1], REF_Organism, CARE[2], REF_Accession, REF_MotifSeq])
             else:
                 #is Motif
                 REF_Organism=self.addEntry('Organism', \
@@ -137,6 +183,31 @@ class CAREdb(sqlitedb):
                     ['Motif', 'Description', 'Note'], \
                     [CARE[0], CARE[2], CARE[3]], \
                     self.Motif, 0)
+        self.commit()
+        return
+
+    def addScanned(self, scan_res):
+        for rs in scan_res:
+            (MotifSeq, SeqName, start, stop, strand, pValue, FoundMotif) = \
+            (rs[0],rs[1],int(rs[2]),int(rs[3]),rs[4],float(rs[6]),rs[7])
+            if strand=='+':
+                strand=1
+            elif strand=='-':
+                strand=0
+            REF_MotifSeq=self.MotifSeq[MotifSeq]
+            REF_SeqName=self.addEntry('fa_file', \
+                ['SeqName'], \
+                [SeqName], \
+                self.SeqName, 0)
+            REF_FoundMotif=self.addEntry('FoundMotif', \
+                ['FoundMotif'], \
+                [FoundMotif], \
+                self.FoundMotif, 0)
+            self.addEntry('Scanned', \
+                ['REF_MotifSeq', 'REF_SeqName', 'start', 'stop', 'strand', \
+                'pValue', 'REF_FoundMotif'], \
+                [REF_MotifSeq, REF_SeqName, start, stop, strand, \
+                pValue, REF_FoundMotif])
         self.commit()
         return
 
@@ -291,15 +362,18 @@ def loadMotifs2list(dbname):
         Motifs.append(rs)
     return Motifs
 
+def loadScan(scanned_file):
+    return [rs.split('\t') for rs in open(scanned_file).readlines()[1:-1]]
 
 if __name__ == "__main__":
     #创建及加载数据库
     CARE=CAREdb('test.db')
     CARE.addCSV('CARE.txt')
+    CARE.addScanned(loadScan('test.scan'))
     #creatSites('sites',loadMotifs('test.db'))
-    for motif in loadMotifs2list('test.db'):
-        print motif
-    seq="(G/c)(C/a)ACCAAT(G/c)(G/c)CA(T/a)CCAAGCNNC(A/g)GAT(T/a)(T/a)N(T/g)(T/g)N(T/a)(T/a)(T/c)A"
-    print multi2iupac(seq)
+    #for motif in loadMotifs2list('test.db'):
+    #    print motif
+    #seq="(G/c)(C/a)ACCAAT(G/c)(G/c)CA(T/a)CCAAGCNNC(A/g)GAT(T/a)(T/a)N(T/g)(T/g)N(T/a)(T/a)(T/c)A"
+    #print multi2iupac(seq)
     #writeFasta('site',any2sites(seq))
     #print len(any2sites(seq))
