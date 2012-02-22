@@ -107,27 +107,43 @@ class sqlitedb:
             print "ERROR:",Error
         return
 
-    def select(self, table, colums=None, where=None):
+    def select(self, table, colums=None, where=None, cache=False):
         '''
         select语句的简单封装
         table：表名
         colums：列名（列表）
         where：条件（字典）{colum:value}
+        cache：是否载入内存
         '''
+        if cache:
+            try:
+                self.cur.execute("ATTACH ':memory:' AS cache")
+            except sqlite3.OperationalError, Error:
+                print "ERROR:",Error
+            cache='CREATE TABLE cache.%s AS' % table
+        else:
+            cache=''
         if colums:
             colums=",".join(colums)
         else:
             colums="*"
         if where:
+            if where.has_key('SQL'):
+                raw_sql=where.pop('SQL')
             where=[k+" IN ('"+"','".join(v)+"')" for (k,v) in where.items()]
+            if raw_sql:
+                where.append(raw_sql)
             where=" AND ".join(where)
-            SQL = 'SELECT %s FROM %s \nWHERE %s' % (colums, table, where)
+            SQL = '%s SELECT %s FROM %s \nWHERE %s' % \
+                (cache, colums, table, where)
         else:
-            SQL = 'SELECT %s FROM %s' % (colums, table)
+            SQL = '%s SELECT %s FROM %s' % (cache, colums, table)
         #print SQL
         self.cur.execute(SQL)
-        rs=self.cur.fetchall()
-        return rs
+        if cache:
+            return
+        else:
+            return self.cur.fetchall()
 
     def commit(self):
         '''

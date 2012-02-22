@@ -12,9 +12,12 @@ import cPickle
 def drawRHist(Motif_Pos,outpath):
     grdevices = importr('grDevices')
     graphics = importr('graphics')
-    xrange=robj.IntVector([-2000,0])
+    xrange=robj.IntVector([-3000,0])
     for motif in Motif_Pos.keys():
         print motif
+        if not Motif_Pos[motif]:
+            print "empty"
+            continue
         dist=-robj.IntVector(Motif_Pos[motif]).ro
         motif=motif.replace('/','_')
         grdevices.png(file="%s/%s.png" % (outpath,motif), width=512, height=512)
@@ -25,9 +28,12 @@ def drawRHist(Motif_Pos,outpath):
 def drawRDensity(Motif_Pos,outpath):
     grdevices = importr('grDevices')
     graphics = importr('graphics')
-    xrange=robj.IntVector([-2000,0])
+    xrange=robj.IntVector([-3000,0])
     for motif in Motif_Pos.keys():
         print motif
+        if not Motif_Pos[motif]:
+            print "empty"
+            continue
         dist=-robj.IntVector(Motif_Pos[motif]).ro
         try:
             density=robj.r.density(dist)
@@ -70,9 +76,9 @@ if __name__ == "__main__":
     basename=sys.argv[1].split('.')[0]
     timestamp=time.time()
     zf = ZipFile('%s.zpkl' % basename, 'r')
-    Motif_Pos = cPickle.loads(zf.open('Motif_Pos.pkl').read())
+    Motif_Pos = cPickle.loads(zf.open('motif_dist.pkl').read())
     zf.close()
-    #drawRHist(Motif_Pos,outpath=basename)
-    drawRDensity(Motif_Pos,outpath=basename)
+    drawRHist(Motif_Pos,outpath="%s/hist" % basename)
+    drawRDensity(Motif_Pos,outpath="%s/density" % basename)
     drawRmultidensity(Motif_Pos,outpath=basename,top=5)
     print time.time()-timestamp

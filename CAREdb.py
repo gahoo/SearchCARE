@@ -2,7 +2,10 @@
 #coding=utf-8
 import os
 import sqlite3
+import sys
 from sqlitedb import sqlitedb
+from zipfile import ZipFile, ZIP_DEFLATED
+import time
 
 class CAREdb(sqlitedb):
     '''
@@ -10,12 +13,10 @@ class CAREdb(sqlitedb):
     方法：
     loadDB2dict：加载数据库到字典LOC_ID/Organism：Motif：Sequence：中
     newDB：初始化数据库（建表和索引）
-    buildDB：导入指定目录下的csv文件进入数据库
-    addCSV：导入指定路径的csv文件进入数据库（查询数据库以保证无重复）
-    addEntry：导入csv文件中的一个条目（一行）进入数据库（查询数据库保证无重复）
-    addCSV2：导入指定路径的csv文件进入数据库（查询字典以保证无重复）
-    addEntry：导入csv文件中的一个条目（一行）进入数据库（查询字典以保证无重复）
-    readCSV：读取csv文件中的内容至列表中
+    buildDB：导入指定目录下的FIMO结果文件进入数据库
+    importMotifs：导入PlantCARE那里得到的Motif信息
+    addEntry：Scan结果的一个条目（一行）进入数据库（查询数据库保证无重复）
+    readCARE：读取PlantCARE文件中的内容至列表中
     属性：
     tables：表的结构
     views：视图的结构
@@ -55,7 +56,7 @@ class CAREdb(sqlitedb):
         """
         CREATE TABLE MotifSeq (
             id INTEGER PRIMARY KEY,
-            Sequence VARCHAR(120) NOT NULL)
+            Sequence VARCHAR(120) NOT NULL UNIQUE)
         """,
         """
         CREATE TABLE Scanned (
@@ -76,7 +77,7 @@ class CAREdb(sqlitedb):
         """
         CREATE TABLE FoundMotif (
             id INTEGER PRIMARY KEY,
-            FoundMotif VARCHAR(120) NOT NULL)
+            FoundMotif VARCHAR(120) NOT NULL UNIQUE)
         """
         ]
 
@@ -104,6 +105,12 @@ class CAREdb(sqlitedb):
     WHERE fa_file.id=Scanned.REF_SeqName
         AND MotifSeq.id=Scanned.REF_MotifSeq
         AND FoundMotif.id=Scanned.REF_FoundMotif
+    """,
+    """
+    CREATE VIEW Motif_SeqName AS
+    SELECT REF_Motif,REF_SeqName
+    FROM instance,Scanned
+    WHERE instance.REF_MotifSeq=Scanned.REF_MotifSeq
     """]
 
     Accession={}
@@ -112,18 +119,23 @@ class CAREdb(sqlitedb):
     MotifSeq={}
     SeqName={}
     FoundMotif={}
-
+    dbfile=''
 
     def __init__(self, dbfile):
         '''
         dbfile数据库文件路径
         '''
+        self.dbfile=dbfile
         if not os.path.exists(dbfile):
             #若不存在数据库则新建之
             sqlitedb.__init__(self, dbfile)
             self.newDB(dbfile)
         else:
             sqlitedb.__init__(self, dbfile)
+            self.SeqName=self.loadDB2dict('fa_file',1,0)
+            self.Motif=self.loadDB2dict('Motif',1,0)
+            self.MotifSeq=self.loadDB2dict('MotifSeq',1,0)
+            self.FoundMotif=self.loadDB2dict('FoundMotif',1,0)
         #加载数据库四个表的内容到四个属性中
         #self.Organism=self.loadDB2dict('Organism', 1, 0)
         #self.Motif=self.loadDB2dict('Motif', 1, 0)
@@ -152,11 +164,11 @@ class CAREdb(sqlitedb):
             except sqlite3.OperationalError, Error:
                 print "ERROR:",Error
 
-    def addCSV(self, csvfile):
+    def importMotifs(self, care_file):
         '''
-        导入指定路径的csv文件
+        导入PlantCARE那里得到的Motif信息
         '''
-        for CARE in self.readCSV(csvfile):
+        for CARE in self.readCARE(care_file):
             if CARE[0]=='':
                 #is Instance
                 if CARE[4]=='':
@@ -168,7 +180,7 @@ class CAREdb(sqlitedb):
                 self.Accession, 0)
                 REF_MotifSeq=self.addEntry('MotifSeq', \
                     ['Sequence'], \
-                    [CARE[4]], \
+                    [multi2iupac(CARE[4])], \
                     self.MotifSeq, 0)
                 self.addEntry('Instance', \
                 ['REF_Motif', 'Type', 'REF_Organism', 'Description', 'REF_Accession', 'REF_MotifSeq'], \
@@ -186,7 +198,27 @@ class CAREdb(sqlitedb):
         self.commit()
         return
 
+    def buildDBfromZip(self):
+        zpath="%s/Scan" % self.dbfile.split('.')[0]
+        for seq in self.MotifSeq.keys():
+            print "adding %s" % seq
+            scanned=self.loadScanned("%s/%s.zip" % (zpath,seq))
+            self.addScanned(scanned)
+
+    def loadScanned(self,scanned_file):
+        '''
+        加载扫描完的文件
+        '''
+        zf = ZipFile(scanned_file, 'r')
+        scanned_file=zf.namelist()[0]
+        scanned = [rs.split('\t') for rs in zf.read(scanned_file).split('\n')[1:-1]]
+        zf.close()
+        return scanned
+
     def addScanned(self, scan_res):
+        '''
+        导入FIMO的扫描结果进入数据库
+        '''
         for rs in scan_res:
             (MotifSeq, SeqName, start, stop, strand, pValue, FoundMotif) = \
             (rs[0],rs[1],int(rs[2]),int(rs[3]),rs[4],float(rs[6]),rs[7])
@@ -235,17 +267,34 @@ class CAREdb(sqlitedb):
             dic[values[kcol]]=id
             return id
 
-    def readCSV(self, csvfile):
+    def readCARE(self, care_file):
         '''
-        读取csv的内容至列表csv中
-        csvfile：csv文件路径
-        return csv（列表）
+        读取PlantCARE的内容至列表care中
+        care_file：care文件路径
+        return care（列表）
         '''
-        file=open(csvfile)
-        csv=[]
+        file=open(care_file)
+        care=[]
         for line in file.readlines():
-            csv.append(line.strip('\n').split('\t'))
-        return csv
+            care.append(line.strip('\n').split('\t'))
+        return care
+
+    def cache(self, table='Scanned', colums=None, SeqName=None, MotifSeq=None, exact=True):
+        '''
+        将Scanned表读入内存，带来约三倍的速度提升。
+        '''
+        if SeqName or MotifSeq or (exact and table=='Scanned'):
+            where={}
+            if SeqName:
+                where['REF_SeqName']=[str(name_id) for name_id in SeqName]
+            if MotifSeq:
+                where['REF_MotifSeq']=[str(motifseq_id) for motifseq_id in MotifSeq]
+            if exact and table=='Scanned':
+                SQL="REF_FoundMotif in (select id from FoundMotif where FoundMotif in (select Sequence from MotifSeq))"
+                where['SQL']=SQL
+        else:
+            where=None
+        self.select(table,colums,where,True)
 
 def iupac2sites(Sequence):
     '''
@@ -366,14 +415,17 @@ def loadScan(scanned_file):
     return [rs.split('\t') for rs in open(scanned_file).readlines()[1:-1]]
 
 if __name__ == "__main__":
-    #创建及加载数据库
-    CARE=CAREdb('test.db')
-    CARE.addCSV('CARE.txt')
-    CARE.addScanned(loadScan('test.scan'))
-    #creatSites('sites',loadMotifs('test.db'))
-    #for motif in loadMotifs2list('test.db'):
-    #    print motif
-    #seq="(G/c)(C/a)ACCAAT(G/c)(G/c)CA(T/a)CCAAGCNNC(A/g)GAT(T/a)(T/a)N(T/g)(T/g)N(T/a)(T/a)(T/c)A"
-    #print multi2iupac(seq)
-    #writeFasta('site',any2sites(seq))
-    #print len(any2sites(seq))
+    try:
+        sys.argv[1]
+    except:
+        print "Tell me the filename please."
+        sys.exit()
+    if not os.path.exists(sys.argv[1]):
+        raise Exception,"There is no file name %s" % sys.argv[1]
+    basename=sys.argv[1].split('.')[0]
+    timestamp=time.time()
+    dbname="%s.db" % sys.argv[1].split('.')[0]
+    CARE=CAREdb(dbname)
+    CARE.importMotifs('CARE.txt')
+    CARE.buildDBfromZip()
+    print time.time()-timestamp
