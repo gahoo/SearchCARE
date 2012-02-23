@@ -53,21 +53,37 @@ def hypergeo_cdf(X, n, m, N):
 def Stats(dbname, SeqName=None, Motifs=None):
     '''
     统计Motif的数目，分布，共现情况
+    motif_dist[motif][MotifSeq]={'+':dist,'-':dist}
+    Motif_SeqName[motif][MotifSeq]={'+':SeqName,'-':SeqName}
     '''
     care=CAREdb(dbname)
-    (SeqName_id,Motifs)=load2RAM(care,SeqName,Motifs)
-    getDist(care,Motifs)
-    (Motifs_SeqName,Motif_stat)=countSeq(care,Motifs)
-    coOccur(care,SeqName_id,Motifs,Motifs_SeqName,Motif_stat)
+    basename=care.dbfile.split('.')[0]
+    (REF_SeqName,Motifs)=loadDB2RAM(care,SeqName,Motifs)
+    id2MotifSeq=dict([(v,k) for k,v in care.MotifSeq.items()])
+    motif_dist={}
+    Motif_SeqName={}
+    for motif in Motifs:
+        REF_MotifSeq=getREF_MotifSeq(care,motif)
+        motif_dist[motif]={}
+        Motif_SeqName[motif]={}
+        for MotifSeq_id in REF_MotifSeq:
+            MotifSeq=id2MotifSeq[MotifSeq_id]
+            motif_dist[motif][MotifSeq]=getDist(care,MotifSeq_id)
+            Motif_SeqName[motif][MotifSeq]=getREF_SeqName(care,MotifSeq_id)
+    coOccur(care,REF_SeqName,Motifs,Motif_SeqName)
+    zf = ZipFile("%s.zpkl" % basename, 'w', ZIP_DEFLATED)
+    zf.writestr('motif_dist.pkl', cPickle.dumps(motif_dist))
+    zf.writestr('Motif_SeqName.pkl', cPickle.dumps(Motif_SeqName))
+    zf.close()
 
-def load2RAM(care,SeqName,Motifs):
+def loadDB2RAM(care,SeqName,Motifs):
     '''
     将指定部分数据库载入内存备用
     '''
     if SeqName:
-        SeqName_id=[care.SeqName[sn] for sn in SeqName]
+        REF_SeqName=[care.SeqName[sn] for sn in SeqName]
     else:
-        SeqName_id=None
+        REF_SeqName=None
     if Motifs:
         MotifSeq_id=[]
         for motif in Motifs:
@@ -80,59 +96,76 @@ def load2RAM(care,SeqName,Motifs):
         Motifs=care.Motif.keys()
     print "Load to Cache"
     care.cache('Instance')
-    care.cache('Scanned',['REF_SeqName','REF_MotifSeq','start'],SeqName=SeqName_id,MotifSeq=MotifSeq_id)
-    return (SeqName_id,Motifs)
+    care.cache('Scanned',['REF_SeqName','REF_MotifSeq','start','stop','strand'],SeqName=REF_SeqName,MotifSeq=MotifSeq_id)
+    return (REF_SeqName,Motifs)
 
-def getDist(care,Motifs):
-    '''
-    获得各个Motif在启动子上的分布情况
-    '''
-    motif_dist={}
-    for motif in Motifs:
-        motif_id=care.Motif[motif]
-        SQL="""
-        SELECT start
-        FROM cache.Scanned
-        WHERE REF_MotifSeq IN (
-                SELECT REF_MotifSeq
-                FROM cache.Instance
-                WHERE REF_Motif=%s)
-        """ % motif_id
-        care.cur.execute(SQL)
-        motif_dist[motif]=[rs[0] for rs in care.cur.fetchall()]
-    zf = ZipFile("%s.zpkl" % basename, 'w', ZIP_DEFLATED)
-    zf.writestr('motif_dist.pkl', cPickle.dumps(motif_dist))
-    zf.close()
+def getREF_MotifSeq(care,motif):
+    motif_id=care.Motif[motif]
+    SQL="""
+    SELECT DISTINCT REF_MotifSeq
+    FROM cache.Instance
+    WHERE REF_Motif=%s
+    """ % motif_id
+    care.cur.execute(SQL)
+    REF_MotifSeq=[rs[0] for rs in care.cur.fetchall()]
+    return REF_MotifSeq
 
-def countSeq(care,Motifs):
+def getDist(care,MotifSeq_id,strand='both'):
     '''
-    统计Motif对应的SeqName_id，及其数量
+    获得MotifSeq在启动子上的分布情况
     '''
-    Motifs_SeqName={}
-    Motif_stat={}
-    for motif in Motifs:
-        motif_id=care.Motif[motif]
-        SQL="""
-        SELECT REF_SeqName
-        FROM cache.Scanned
-        WHERE REF_MotifSeq IN (
-                SELECT REF_MotifSeq
-                FROM cache.Instance
-                WHERE REF_Motif=%s)
-        """ % motif_id
-        care.cur.execute(SQL)
-        Motifs_SeqName[motif_id]=set([rs[0] for rs in care.cur.fetchall()])
-        Motif_stat[motif_id]=len(Motifs_SeqName[motif_id])
-        Motifs_SeqName[motif_id]
-        print motif,motif_id,Motif_stat[motif_id]
-    return (Motifs_SeqName,Motif_stat)
+    if strand=='both':
+        WHERE=""
+    elif strand=='+':
+        WHERE="AND strand=1"
+    elif strand=='-':
+        WHERE="AND strand=0"
+    SQL="""
+    SELECT start,stop,strand
+    FROM cache.Scanned
+    WHERE REF_MotifSeq=%s
+        %s
+    """ % (MotifSeq_id,WHERE)
+    care.cur.execute(SQL)
+    dist={'+':[],'-':[]}
+    for start,stop,strand in care.cur.fetchall():
+        if strand==1:
+            dist['+'].append(start)
+        else:
+            dist['-'].append(stop)
+    return dist
 
-def distance():
-    return
+def getREF_SeqName(care,MotifSeq_id,strand='both'):
+    '''
+    统计REF_MotifSeq对应的REF_SeqName，及其数量
+    TODO 细化到具体的序列
+    '''
+    if strand=='both':
+        WHERE=""
+    elif strand=='+':
+        WHERE="AND strand=1"
+    elif strand=='-':
+        WHERE="AND strand=0"
+    SQL="""
+    SELECT REF_SeqName,strand
+    FROM cache.Scanned
+    WHERE REF_MotifSeq=%s
+        %s
+    """ % (MotifSeq_id,WHERE)
+    care.cur.execute(SQL)
+    SeqName={'+':[],'-':[]}
+    for REF_SeqName,strand in care.cur.fetchall():
+        if strand==1:
+            SeqName['+'].append(REF_SeqName)
+        else:
+            SeqName['-'].append(REF_SeqName)
+    return SeqName
 
-def coOccur(care,SeqName_id,Motifs,Motifs_SeqName,Motif_stat,p=None):
+def coOccur(care,REF_SeqName,Motifs,Motif_SeqName,p=None):
     '''
     共现的Motif
+    TODO 细化到具体的序列
+    TODO 考虑距离问题，若是距离大于某个值，就不算?
     '''
     basename=care.dbfile.split('.')[0]
     nodefile="%s.Node" % basename
@@ -143,8 +176,8 @@ def coOccur(care,SeqName_id,Motifs,Motifs_SeqName,Motif_stat,p=None):
     edge=[]
     co_Occur={}
     print "-------"
-    if SeqName_id:
-        Seq_num=len(SeqName_id)
+    if REF_SeqName:
+        Seq_num=len(REF_SeqName)
     else:
         Seq_num=len(care.SeqName)
     Motifs=dict([(k,None) for k in Motifs])
@@ -153,17 +186,18 @@ def coOccur(care,SeqName_id,Motifs,Motifs_SeqName,Motif_stat,p=None):
         p=0.05
         #p=1.0/(m_total_num*(m_total_num-1))
     for motifa in Motifs.keys():
-        motifA=Motifs_SeqName[care.Motif[motifa]]
-        node.append("%s\t%s" % (motifa,Motif_stat[care.Motif[motifa]]))
+        motifA=mergeSeqName(Motif_SeqName[motifa])
+        node.append("%s\t%s" % (motifa,len(motifA)))
         print len(Motifs)
         Motifs.pop(motifa)
         for motifb in Motifs:
-            motifB=Motifs_SeqName[care.Motif[motifb]]
+            motifB=mergeSeqName(Motif_SeqName[motifb])
             m_ab="%s|%s" % (motifa,motifb)
             co_Occur[m_ab]=motifA&motifB
             co_num=len(motifA&motifB)
-            a_num=Motif_stat[care.Motif[motifa]]
-            b_num=Motif_stat[care.Motif[motifb]]
+            #此处会重复统计SeqName的个数，最好能够用一个变量直接记起来，直接查询
+            a_num=len(motifA)
+            b_num=len(motifB)
             hypergeocdf=hypergeo_cdf(co_num,a_num,b_num,Seq_num)
             if hypergeocdf<=p:
                 row=[motifa,motifb,co_num,hypergeocdf]
@@ -172,6 +206,22 @@ def coOccur(care,SeqName_id,Motifs,Motifs_SeqName,Motif_stat,p=None):
                 edge.append(row)
     NodeOutput.write("\n".join(node))
     EdgeOutput.write("\n".join(edge))
+
+def mergeSeqName(motif_dict):
+    '''
+    motif_dict={MotifSeq1:{'+':[],'-':[]},}
+    '''
+    Seq_id=[]
+    [Seq_id.extend(v['+']+v['-']) for v in motif_dict.values()]
+    return set(Seq_id)
+
+def distance():
+    '''
+    统计两个motif间的距离
+    TODO 细化到具体的序列
+    '''
+    return
+
 
 def loadLOC(filename):
     return [line.strip() for line in open(filename).readlines()]
@@ -184,15 +234,7 @@ if __name__ == "__main__":
         sys.exit()
     if not os.path.exists(sys.argv[1]):
         raise Exception,"There is no file name %s" % sys.argv[1]
-    basename=sys.argv[1].split('.')[0]
-    #nodefile="%s.Node" % basename
-    #edgefile="%s.Edge" % basename
     timestamp=time.time()
-    #Motif_LOC = cPickle.load(open("%s.pkl" % basename,"rb"))
-    #zf = ZipFile('%s.zpkl' % basename, 'r')
-    #Motif_LOC = cPickle.loads(zf.open('Motif_LOC.pkl').read())
-    #zf.close()
-    #co_Occurrence(Motif_LOC,nodefile,edgefile)
     ['Os12t0182500-01','Os12t0186600-03','Os12t0186901-00','Os12t0197150-00','Os12t0205633-00']
     ['HSE','Chs-CMA3','AAGAA-motif','CATTAT-motif','CTAG-motif']
     loc=loadLOC(sys.argv[2])
