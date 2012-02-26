@@ -105,17 +105,27 @@ SQL2=["attach ':memory:' as cache",
     where cache.Scanned.REF_MotifSeq=cache.Instance.REF_MotifSeq and REF_Motif=1
     """
     ]
-'''
+
+SQL3=[
+    """
+    SELECT REF_SeqName,REF_Motif,REF_Organism,Description,start,stop,strand,pValue
+    FROM cache.Instance,cache.Scanned
+    WHERE cache.Instance.REF_MotifSeq=cache.Scanned.REF_MotifSeq
+    AND REF_SeqName in ('40747','10669','1620','5828','30256','10402')
+    """,
+    ]
 
 benchmark=CAREdb('RAP_3kbp.db')
+benchmark.cache('Instance')
+benchmark.cache('Scanned',['REF_SeqName','REF_MotifSeq','start','stop','strand','pValue'],SeqName=['40747','10669','1620','5828','30256','10402'])
 
-for sql in SQL:
+for sql in SQL3:
     print sql
     timestamp=time.time()
     benchmark.cur.execute(sql)
-    #print [rs[0] for rs in benchmark.cur.fetchall()]
+    print [rs[0] for rs in benchmark.cur.fetchall()]
     print time.time()-timestamp
-
+'''
 print "------------"
 tables=['Scanned','cache.Scanned']
 for tname in tables:
@@ -123,7 +133,7 @@ for tname in tables:
     #benchmark.select(tname)
     benchmark.cache(colums=['REF_SeqName','REF_MotifSeq'])
     print time.time()-timestamp
-'''
+
 benchmark=CAREdb('RAP_3kbp.db')
 
 timestamp=time.time()
@@ -131,7 +141,8 @@ timestamp=time.time()
 print time.time()-timestamp
 print "--------------"
 timestamp=time.time()
-benchmark.cache('Scanned',['REF_SeqName','REF_MotifSeq','start'])
+#benchmark.cache('Scanned',['REF_SeqName','REF_MotifSeq','start'])
 #benchmark.select('cache.Motif_SeqName',['REF_SeqName','REF_Motif'])
 print len(benchmark.loadDB2dict('fa_file',1,0))
 print time.time()-timestamp
+'''

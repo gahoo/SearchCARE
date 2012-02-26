@@ -3,6 +3,7 @@
 import sys
 import os
 import time
+import getopt
 import cPickle
 from math import log, exp, sqrt
 from mpmath import loggamma
@@ -50,14 +51,17 @@ def hypergeo_cdf(X, n, m, N):
         s += max(gauss_hypergeom(i, n, m, N), 0.0)
     return min(max(s,0.0), 1)
 
-def Stats(dbname, SeqName=None, Motifs=None):
+def Stats(dbname, SeqName=None, Motifs=None, p=None, output=None):
     '''
     统计Motif的数目，分布，共现情况
     motif_dist[motif][MotifSeq]={'+':dist,'-':dist}
     Motif_SeqName[motif][MotifSeq]={'+':SeqName,'-':SeqName}
     '''
     care=CAREdb(dbname)
-    basename=care.dbfile.split('.')[0]
+    if not output:
+        basename=care.dbfile.split('.')[0]
+    else:
+        basename=output
     (REF_SeqName,Motifs)=loadDB2RAM(care,SeqName,Motifs)
     id2MotifSeq=dict([(v,k) for k,v in care.MotifSeq.items()])
     motif_dist={}
@@ -70,11 +74,15 @@ def Stats(dbname, SeqName=None, Motifs=None):
             MotifSeq=id2MotifSeq[MotifSeq_id]
             motif_dist[motif][MotifSeq]=getDist(care,MotifSeq_id)
             Motif_SeqName[motif][MotifSeq]=getREF_SeqName(care,MotifSeq_id)
-    coOccur(care,REF_SeqName,Motifs,Motif_SeqName)
+    MergedSeqName=getMergedSeqName(Motif_SeqName)
+    SeqName_counts=countSeqName(MergedSeqName)
     zf = ZipFile("%s.zpkl" % basename, 'w', ZIP_DEFLATED)
     zf.writestr('motif_dist.pkl', cPickle.dumps(motif_dist))
     zf.writestr('Motif_SeqName.pkl', cPickle.dumps(Motif_SeqName))
+    zf.writestr('MergedSeqName.pkl', cPickle.dumps(MergedSeqName))
+    zf.writestr('SeqName_counts.pkl', cPickle.dumps(SeqName_counts))
     zf.close()
+    coOccur(care,REF_SeqName,SeqName_counts,MergedSeqName,p,output)
 
 def loadDB2RAM(care,SeqName,Motifs):
     '''
@@ -161,13 +169,16 @@ def getREF_SeqName(care,MotifSeq_id,strand='both'):
             SeqName['-'].append(REF_SeqName)
     return SeqName
 
-def coOccur(care,REF_SeqName,Motifs,Motif_SeqName,p=None):
+def coOccur(care,REF_SeqName,SeqName_counts,MergedSeqName,p=None,output=None):
     '''
     共现的Motif
     TODO 细化到具体的序列
     TODO 考虑距离问题，若是距离大于某个值，就不算?
     '''
-    basename=care.dbfile.split('.')[0]
+    if not output:
+        basename=care.dbfile.split('.')[0]
+    else:
+        basename=output
     nodefile="%s.Node" % basename
     edgefile="%s.Edge" % basename
     NodeOutput=open(nodefile, 'w')
@@ -180,24 +191,22 @@ def coOccur(care,REF_SeqName,Motifs,Motif_SeqName,p=None):
         Seq_num=len(REF_SeqName)
     else:
         Seq_num=len(care.SeqName)
-    Motifs=dict([(k,None) for k in Motifs])
-    m_total_num=len(Motifs)
+    m_total_num=len(MergedSeqName)
     if not p:
         p=0.05
         #p=1.0/(m_total_num*(m_total_num-1))
-    for motifa in Motifs.keys():
-        motifA=mergeSeqName(Motif_SeqName[motifa])
-        node.append("%s\t%s" % (motifa,len(motifA)))
-        print len(Motifs)
-        Motifs.pop(motifa)
-        for motifb in Motifs:
-            motifB=mergeSeqName(Motif_SeqName[motifb])
+    for motifa in MergedSeqName.keys():
+        motifA=MergedSeqName[motifa]
+        node.append("%s\t%s" % (motifa,SeqName_counts[motifa]))
+        print len(MergedSeqName)
+        MergedSeqName.pop(motifa)
+        for motifb in MergedSeqName.keys():
+            motifB=MergedSeqName[motifb]
             m_ab="%s|%s" % (motifa,motifb)
             co_Occur[m_ab]=motifA&motifB
             co_num=len(motifA&motifB)
-            #此处会重复统计SeqName的个数，最好能够用一个变量直接记起来，直接查询
-            a_num=len(motifA)
-            b_num=len(motifB)
+            a_num=SeqName_counts[motifa]
+            b_num=SeqName_counts[motifb]
             hypergeocdf=hypergeo_cdf(co_num,a_num,b_num,Seq_num)
             if hypergeocdf<=p:
                 row=[motifa,motifb,co_num,hypergeocdf]
@@ -207,6 +216,18 @@ def coOccur(care,REF_SeqName,Motifs,Motif_SeqName,p=None):
     NodeOutput.write("\n".join(node))
     EdgeOutput.write("\n".join(edge))
 
+def getMergedSeqName(Motif_SeqName):
+    '''
+    合并Motif_SeqName结果，即把：
+    Motif_SeqName[motif][MotifSeq]={'+':SeqName,'-':SeqName}
+    变成：
+    Motif_SeqName[motif]=SeqName
+    '''
+    MergedSeqName={}
+    for motif in Motif_SeqName.keys():
+        MergedSeqName[motif]=mergeSeqName(Motif_SeqName[motif])
+    return MergedSeqName
+
 def mergeSeqName(motif_dict):
     '''
     motif_dict={MotifSeq1:{'+':[],'-':[]},}
@@ -215,6 +236,12 @@ def mergeSeqName(motif_dict):
     [Seq_id.extend(v['+']+v['-']) for v in motif_dict.values()]
     return set(Seq_id)
 
+def countSeqName(MergedSeqName):
+    SeqName_counts={}
+    for motif in MergedSeqName.keys():
+        SeqName_counts[motif]=len(MergedSeqName[motif])
+    return SeqName_counts
+
 def distance():
     '''
     统计两个motif间的距离
@@ -222,23 +249,57 @@ def distance():
     '''
     return
 
-
-def loadLOC(filename):
-    return [line.strip() for line in open(filename).readlines()]
-
-if __name__ == "__main__":
+def loadList(filename):
+    lst=list(set([line.strip() for line in open(filename).readlines()]))
+    print "%s loaded" % len(lst)
     try:
-        sys.argv[1]
-    except:
-        print "Tell me the filename please."
-        sys.exit()
-    if not os.path.exists(sys.argv[1]):
-        raise Exception,"There is no file name %s" % sys.argv[1]
+        lst.remove('')
+    except ValueError:
+        pass
+    return lst
+
+def usage():
+    print "CAREdb.py -f <fasta_file> [-d] <dbfile> [-s]<seqname_list> [-m] <motif_list> [-p] pThresh [-o] <output>"
+
+def has_file(filename):
+    if not os.path.exists(filename):
+        raise Exception,"There is no %s here" % filename
+
+if __name__ == '__main__':
+    try:
+        opts, args = getopt.getopt(sys.argv[1:], "hd:s:m:p:o:", \
+            ["help","database=","seqname_list=","motif_list=","pThresh","output="])
+    except getopt.GetoptError:
+        usage()
+        sys.exit(2)
+    for opt, arg in opts:
+        if opt in ("-h", "--help"):
+            usage()
+            sys.exit()
+        elif opt in ("-d", "--database"):
+            dbname=arg
+            has_file(dbname)
+            seqname_list=None
+            motif_list=None
+            pThresh=None
+            output=dbname.split('.')[0]
+        elif opt in ("-s", "--seqname_list"):
+            seqname_list=arg
+            has_file(seqname_list)
+            output=seqname_list.split('.')[0]
+            seqname_list=loadList(seqname_list)
+        elif opt in ("-m", "--motif_list"):
+            motif_list=arg
+            has_file(motif_list)
+            motif_list=loadList(motif_list)
+        elif opt in ("-p", "--pThresh"):
+            pThresh=float(arg)
+        elif opt in ("-o", "--output"):
+            output=arg
+    if not 'dbname' in dir():
+        print "tell me dbname please"
+        usage()
+        sys.exit(2)
     timestamp=time.time()
-    ['Os12t0182500-01','Os12t0186600-03','Os12t0186901-00','Os12t0197150-00','Os12t0205633-00']
-    ['HSE','Chs-CMA3','AAGAA-motif','CATTAT-motif','CTAG-motif']
-    loc=loadLOC(sys.argv[2])
-    Stats(sys.argv[1], \
-    None, \
-    None,)
+    Stats(dbname, seqname_list, motif_list, pThresh, output)
     print time.time()-timestamp

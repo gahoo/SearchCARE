@@ -15,7 +15,10 @@ def dumpCSV(dbname,SeqName_list):
     Motif=invertDict(care.Motif)
     Organism=invertDict(care.Organism)
 
-    REF_SeqName_list=[str(care.SeqName[sn]) for sn in SeqName_list]
+    if SeqName_list:
+        REF_SeqName_list=[str(care.SeqName[sn]) for sn in SeqName_list]
+    else:
+        REF_SeqName_list=None
     for rs in readSeqName(care,REF_SeqName_list):
         (REF_SeqName,REF_Motif,REF_Organism,Description,start,stop,strand,pValue)=rs
         if strand==1:
@@ -38,12 +41,16 @@ def readSeqName(care,REF_SeqName_list):
     print "Load2RAM"
     care.cache('Instance')
     care.cache('Scanned',['REF_SeqName','REF_MotifSeq','start','stop','strand','pValue'],SeqName=REF_SeqName_list)
+    if REF_SeqName_list:
+        where="AND REF_SeqName in ('%s')" % "','".join(REF_SeqName_list)
+    else:
+        where=""
     SQL="""
     SELECT REF_SeqName,REF_Motif,REF_Organism,Description,start,stop,strand,pValue
     FROM cache.Instance,cache.Scanned
     WHERE cache.Instance.REF_MotifSeq=cache.Scanned.REF_MotifSeq
-    AND REF_SeqName in ('%s')
-    """ % "','".join(REF_SeqName_list)
+    %s
+    """ % where
     #print SQL
     care.cur.execute(SQL)
     return care.cur.fetchall()
@@ -65,9 +72,6 @@ def loadList(filename):
 if __name__ == '__main__':
     try:
         opts, args = getopt.getopt(sys.argv[1:], "hd:i:o:", ["help","database=", "filename=", "outfile="])
-        if len(opts)<2:
-            usage()
-            sys.exit(2)
     except getopt.GetoptError:
         usage()
         sys.exit(2)
@@ -79,15 +83,20 @@ if __name__ == '__main__':
             dbname=arg
             if not os.path.exists(dbname):
                 raise Exception,"There is no %s here" % dbname
+            SeqName_list=None
+            outfile = "%s.zip" % dbname.split('.')[0]
         elif opt in ("-i", "--filename"):
             filename = arg
             if not os.path.exists(filename):
                 raise Exception,"There is no %s here" % filename
             outfile = "%s.zip" % filename.split('.')[0]
+            SeqName_list=loadList(filename)
         elif opt in ("-o", "--outfile"):
             outfile = arg
+    if not 'dbname' in dir():
+        usage()
+        sys.exit(2)
     timestamp=time.time()
-    SeqName_list=loadList(filename)
     CSV=dumpCSV(dbname,SeqName_list)
     writeCSV(outfile,CSV)
     print time.time()-timestamp

@@ -3,6 +3,7 @@
 import os
 import sqlite3
 import sys
+import getopt
 from sqlitedb import sqlitedb
 from zipfile import ZipFile, ZIP_DEFLATED
 import time
@@ -72,7 +73,7 @@ class CAREdb(sqlitedb):
         """
         CREATE TABLE fa_file (
             id INTEGER PRIMARY KEY,
-            SeqName VARCHAR(20))
+            SeqName VARCHAR(20) NOT NULL UNIQUE)
         """,
         """
         CREATE TABLE FoundMotif (
@@ -132,14 +133,15 @@ class CAREdb(sqlitedb):
             self.newDB(dbfile)
         else:
             sqlitedb.__init__(self, dbfile)
+            #加载数据库表的内容到属性中
             self.SeqName=self.loadDB2dict('fa_file',1,0)
             self.Motif=self.loadDB2dict('Motif',1,0)
             self.MotifSeq=self.loadDB2dict('MotifSeq',1,0)
-            self.FoundMotif=self.loadDB2dict('FoundMotif',1,0)
-        #加载数据库四个表的内容到四个属性中
-        #self.Organism=self.loadDB2dict('Organism', 1, 0)
-        #self.Motif=self.loadDB2dict('Motif', 1, 0)
-        #self.Accession=self.loadDB2dict('Accession', 1, 0)
+            #FoundMotif要加载太慢，数量太大了
+            #self.FoundMotif=self.loadDB2dict('FoundMotif',1,0)
+            self.Organism=self.loadDB2dict('Organism', 1, 0)
+            self.Motif=self.loadDB2dict('Motif', 1, 0)
+            #self.Accession=self.loadDB2dict('Accession', 1, 0)
 
     def loadDB2dict(self, tname, kcol, vcol):
         '''
@@ -414,17 +416,31 @@ def loadMotifs2list(dbname):
 def loadScan(scanned_file):
     return [rs.split('\t') for rs in open(scanned_file).readlines()[1:-1]]
 
-if __name__ == "__main__":
+def usage():
+    print "CAREdb.py -f <fasta_file> [-d] <dbfile>"
+
+if __name__ == '__main__':
     try:
-        sys.argv[1]
-    except:
-        print "Tell me the filename please."
-        sys.exit()
-    if not os.path.exists(sys.argv[1]):
-        raise Exception,"There is no file name %s" % sys.argv[1]
-    basename=sys.argv[1].split('.')[0]
+        opts, args = getopt.getopt(sys.argv[1:], "hf:d:", ["help","filename=","database="])
+    except getopt.GetoptError:
+        usage()
+        sys.exit(2)
+    for opt, arg in opts:
+        if opt in ("-h", "--help"):
+            usage()
+            sys.exit()
+        elif opt in ("-f", "--filename"):
+            filename=arg
+            if not os.path.exists(filename):
+                raise Exception,"There is no %s here" % filename
+            dbname="%s.db" % filename.split('.')[0]
+        elif opt in ("-d", "--database"):
+            dbname=arg
+    if not 'dbname' in dir():
+        usage()
+        sys.exit(2)
     timestamp=time.time()
-    dbname="%s.db" % sys.argv[1].split('.')[0]
+    print dbname
     CARE=CAREdb(dbname)
     CARE.importMotifs('CARE.txt')
     CARE.buildDBfromZip()

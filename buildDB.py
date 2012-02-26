@@ -31,7 +31,7 @@ def loadMotifs(caredb):
     '''
     Skip="','".join(checkScannedDB(caredb))
     SQL="""
-    SELECT Motif,Sequence
+    SELECT DISTINCT Motif,Sequence
     FROM Motif,Instance,MotifSeq
     WHERE Motif.id=Instance.REF_Motif
         AND MotifSeq.id=Instance.REF_MotifSeq
