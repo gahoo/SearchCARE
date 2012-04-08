@@ -139,9 +139,10 @@ def saveNet(server,networkid,network_name):
     zoom=0.9*server.Cytoscape.getZoom(networkid)
     server.Cytoscape.setZoom(networkid,zoom)
     print network_name,scale,zoom
-    server.Cytoscape.saveNetwork(networkid,"%s%s_Cyto.gml" % (os.getcwd(),network_name))
-    #server.Cytoscape.saveNetwork(networkid,"%s%s_Cyto.xgmml" % (os.getcwd(),network_name), "xgmml")
-    server.Cytoscape.exportView(networkid,"%s%s_Cyto.png" % (os.getcwd(),network_name),"png",scale)
+    netfile="%s%s_Cyto" % (os.getcwd(),network_name)
+    #server.Cytoscape.saveNetwork(networkid,"%s.gml" % netfile)
+    server.Cytoscape.executeCommand('network','export',{'file':"%s.xgmml" % netfile,'type':"xgmml"})
+    server.Cytoscape.exportView(networkid,"%s.png" % netfile,"png",scale)
 
 def subNetEnrichNodes(server,networkid,network_name,Nodes,layout,ER=1.0):
     '''
