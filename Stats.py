@@ -75,7 +75,7 @@ def hypergeo_cdf_enrich(X, n, m, N):
         s += max(gauss_hypergeom(i, n, m, N), 0.0)
     return min(max(s,0.0), 1)
 
-def Stats(dbname, SeqName=None, Motifs=None, p=None, output=None):
+def Stats(dbname, SeqName=None, Motifs=None, co_dist_range=None, p=None, output=None):
     '''
     统计Motif的数目，分布，共现情况
     motif_dist[motif][MotifSeq]={'+':dist,'-':dist}
@@ -102,18 +102,27 @@ def Stats(dbname, SeqName=None, Motifs=None, p=None, output=None):
             Motif_SeqName[motif][MotifSeq]=getREF_SeqName(care,MotifSeq_id)
     MergedSeqName=getMerged(Motif_SeqName,'SeqName')
     Merged_dist=getMerged(motif_dist,'dist')
+    Merged_MotifSeq_dist=getMerged(motif_dist,'MotifSeq')
+    Merged_REF_SeqName_dist=getMerged(motif_dist,"REF_SeqName")
     SeqName_counts=countSeqName(MergedSeqName)
     zf = ZipFile("%s.zpkl" % basename, 'w', ZIP_DEFLATED)
     if SeqName:
         Enriched=enrichMent(care,SeqName_counts,list_size=len(REF_SeqName),output=output)
         zf.writestr('Enriched.pkl', cPickle.dumps(Enriched))
+    zf.writestr('REF_SeqName.pkl', cPickle.dumps(REF_SeqName))
     zf.writestr('motif_dist.pkl', cPickle.dumps(motif_dist))
+    zf.writestr('Merged_MotifSeq_dist.pkl', cPickle.dumps(Merged_MotifSeq_dist))
     zf.writestr('Merged_dist.pkl', cPickle.dumps(Merged_dist))
     zf.writestr('Motif_SeqName.pkl', cPickle.dumps(Motif_SeqName))
     zf.writestr('MergedSeqName.pkl', cPickle.dumps(MergedSeqName))
+    zf.writestr('Merged_REF_SeqName_dist.pkl', cPickle.dumps(Merged_REF_SeqName_dist))
     zf.writestr('SeqName_counts.pkl', cPickle.dumps(SeqName_counts))
-    co_Occur=coOccur(care,REF_SeqName,SeqName_counts,MergedSeqName,p,output)
+    (co_Occur,edge)=coOccur(care,REF_SeqName,SeqName_counts,MergedSeqName,p,output)
     zf.writestr('co_Occur.pkl', cPickle.dumps(co_Occur))
+    zf.writestr('edge.pkl', cPickle.dumps(edge))
+    if co_dist_range:
+        co_Occur_calibrated=calibrateDist(care,REF_SeqName,co_Occur,edge,motif_dist,co_dist_range,p,output)
+        zf.writestr('co_Occur_calibrated.pkl', cPickle.dumps(co_Occur_calibrated))
     zf.close()
 
 def loadDB2RAM(care,SeqName,Motifs):
@@ -153,6 +162,7 @@ def getREF_MotifSeq(care,motif):
 def getDist(care,MotifSeq_id,strand='both'):
     '''
     获得MotifSeq在启动子上的分布情况
+    dist[REF_SeqName][strand]=start/stop
     '''
     if strand=='both':
         WHERE=""
@@ -161,19 +171,33 @@ def getDist(care,MotifSeq_id,strand='both'):
     elif strand=='-':
         WHERE="AND strand=0"
     SQL="""
-    SELECT start,stop,strand
+    SELECT REF_SeqName,start,stop,strand
     FROM cache.Scanned
     WHERE REF_MotifSeq=%s
         %s
     """ % (MotifSeq_id,WHERE)
     care.cur.execute(SQL)
-    dist={'+':[],'-':[]}
-    for start,stop,strand in care.cur.fetchall():
+    rs=care.cur.fetchall()
+    dist=dict([(r[0],{'+':[],'-':[]}) for r in rs])
+    for REF_SeqName,start,stop,strand in rs:
         if strand==1:
-            dist['+'].append(start)
+            dist[REF_SeqName]['+'].append(start)
         else:
-            dist['-'].append(stop)
+            dist[REF_SeqName]['-'].append(stop)
     return dist
+
+def getCoDist(distA,distB,lower,higer):
+    '''
+    获取符合距离范围的共现模体位置及距离
+    '''
+    comb=[(i,j) for i in distA for j in distB]
+    distances=map(lambda x: x[0]-x[1], comb)
+    CoDist={}
+    for i,d in enumerate(distances):
+        print comb[i],d
+        if abs(d)>=lower and abs(d)<=higer:
+            CoDist[comb[i]]=d
+    return CoDist
 
 def getREF_SeqName(care,MotifSeq_id,strand='both'):
     '''
@@ -225,7 +249,7 @@ def enrichMent(care,SeqName_counts,list_size,output=None):
             print "not found"
             continue
         ER=(float(x)/list_size)/(float(m)/db_size)
-        print x,m,list_size,db_size,ER,stats.hypergeom.cdf(x,db_size,m,list_size)
+        #print x,m,list_size,db_size,ER,stats.hypergeom.cdf(x,db_size,m,list_size)
         try:
             p=1-hypergeo_cdf_enrich(x,list_size,m,db_size)
         except AssertionError,ERR:
@@ -236,7 +260,7 @@ def enrichMent(care,SeqName_counts,list_size,output=None):
         row=(motif,Motif_Desc[motif],x,m,list_size,db_size,ER,p)
         row=[str(r) for r in row]
         node.append("\t".join(row) )
-        if p<0.05:
+        if p<0.05 and x>=5:
             Enriched[motif]={}
             Enriched[motif]['ER']=ER
             Enriched[motif]['p']=p
@@ -276,19 +300,67 @@ def coOccur(care,REF_SeqName,SeqName_counts,MergedSeqName,p=None,output=None):
         MergedSeqName.pop(motifa)
         for motifb in MergedSeqName.keys():
             motifB=MergedSeqName[motifb]
-            m_ab="%s|%s" % (motifa,motifb)
-            co_Occur[m_ab]=motifA&motifB
+            co_Occur[(motifa,motifb)]=motifA&motifB
             co_num=len(motifA&motifB)
             a_num=SeqName_counts[motifa]
             b_num=SeqName_counts[motifb]
             hypergeocdf=hypergeo_cdf(co_num,a_num,b_num,Seq_num)
-            if hypergeocdf<=p:
-                row=[motifa,motifb,co_num,a_num,b_num,hypergeocdf]
-                row="\t".join([str(col) for col in row])
+            #共现小于5已经没有任何意义，应该用Fisher精确检验
+            if hypergeocdf<=p and co_num>=5:
+                row=(motifa,motifb,co_num,a_num,b_num,hypergeocdf)
                 #print row
                 edge.append(row)
-    EdgeOutput.write("\n".join(edge))
-    return co_Occur
+    EdgeOutput.write("\n".join(["\t".join([str(col) for col in row]) for row in edge]))
+    EdgeOutput.close()
+    #EdgeOutput=open("%s_cali.Edge" % basename, 'w')
+    return (co_Occur,edge)
+
+def calibrateDist(care,REF_SeqName,co_Occur,edge,motif_dist,co_dist_range,p=None,output=None):
+    '''
+    co_Occur_calibrated[(motifa,motifb)][REF_SeqName]={(motifa_pos,motifb_pos):distance}
+    '''
+    (lower,higer)=co_dist_range
+    if not p:
+        p=0.05
+    if not output:
+        basename=care.dbfile.split('.')[0]
+    else:
+        basename=output
+    edgefile="%s_codist%d#%d.Edge" % (basename,lower,higer)
+    EdgeOutput=open(edgefile, 'w')
+    if REF_SeqName:
+        Seq_num=len(REF_SeqName)
+    else:
+        Seq_num=len(care.SeqName)
+    dist=getMerged(motif_dist,"REF_SeqName")
+    co_Occur_calibrated={}
+    calibrated_edge=[]
+    for row in edge:
+        (motifa,motifb,co_num,a_num,b_num,hypergeocdf)=row
+        co_Occur_calibrated[(motifa,motifb)]={}
+        for REF_SeqName in co_Occur[(motifa,motifb)]:
+            distA=dist[motifa][REF_SeqName]
+            distB=dist[motifb][REF_SeqName]
+            print motifa,motifb,REF_SeqName
+            distances=getCoDist(distA,distB,lower,higer)
+            if distances:
+                co_Occur_calibrated[(motifa,motifb)][REF_SeqName]=distances
+        if not co_Occur_calibrated[(motifa,motifb)]:
+            co_Occur_calibrated.pop((motifa,motifb))
+            continue
+        co_num=len(co_Occur_calibrated[(motifa,motifb)].keys())
+        avg_dist=avgDist(co_Occur_calibrated[(motifa,motifb)])
+        try:
+            hypergeocdf=hypergeo_cdf(co_num,a_num,b_num,Seq_num)
+        except:
+            print co_num,row
+            continue
+        if hypergeocdf<=p and co_num>=5:
+            #row=(motifa,motifb,co_num,a_num,b_num,Seq_num,avg_dist,hypergeocdf)
+            row=(motifa,motifb,co_num,a_num,b_num,hypergeocdf)
+            calibrated_edge.append(row)
+    EdgeOutput.write("\n".join(["\t".join([str(col) for col in row]) for row in calibrated_edge]))
+    return co_Occur_calibrated
 
 def getMerged(motif_dict,type):
     '''
@@ -296,14 +368,36 @@ def getMerged(motif_dict,type):
     Motif_SeqName[motif][MotifSeq]={'+':SeqName,'-':SeqName}
     变成：
     Motif_SeqName[motif]=SeqName
+    或
+    motif_dist[motif][MotifSeq][REF_SeqName]={'+':start,'-':stop}
+    变成：
+    motif_dist[motif]=dist
+    或
+    motif_dist[motif][MotifSeq][REF_SeqName]={'+':start,'-':stop}
+    变成：
+    motif_dist[motif][MotifSeq]={'+':start,'-':stop}
+    或
+    motif_dist[motif][MotifSeq][REF_SeqName]={'+':start,'-':stop}
+    变成：
+    motif_dist[motif][REF_SeqName]=dist
     '''
     Merged={}
     if type=='dist':
         for motif in motif_dict.keys():
-            Merged[motif]=merge(motif_dict[motif])
+            Merged[motif]=[]
+            for MotifSeq in motif_dict[motif].keys():
+                Merged[motif].extend(merge(motif_dict[motif][MotifSeq]))
     elif type=='SeqName':
         for motif in motif_dict.keys():
             Merged[motif]=mergeSeqName(motif_dict[motif])
+    elif type=='REF_SeqName':
+        for motif in motif_dict.keys():
+            Merged[motif]=mergeREF_SeqName(motif_dict[motif])
+    elif type=='MotifSeq':
+        for motif in motif_dict.keys():
+            Merged[motif]={}
+            for MotifSeq in motif_dict[motif].keys():
+                Merged[motif][MotifSeq]=mergeMotifSeq(motif_dict[motif][MotifSeq])
     return Merged
 
 def merge(motif_dict):
@@ -320,6 +414,37 @@ def mergeSeqName(motif_dict):
     '''
     return set(merge(motif_dict))
 
+def mergeREF_SeqName(motif_dict):
+    '''
+    motif[MotifSeq][REF_SeqName]={'+':start,'-':stop}
+    return motif[REF_SeqName]=dist
+    '''
+    REF_SeqName_merged={}
+    REF_SeqName_keys=[]
+    for MotifSeq in motif_dict.keys():
+        REF_SeqName_keys.extend(motif_dict[MotifSeq].keys())
+    for REF_SeqName in set(REF_SeqName_keys):
+        REF_SeqName_merged[REF_SeqName]=[]
+    for MotifSeq in motif_dict.keys():
+        for REF_SeqName in motif_dict[MotifSeq].keys():
+            d=motif_dict[MotifSeq][REF_SeqName]
+            m=[]
+            m.extend(d['+']+d['-'])
+            REF_SeqName_merged[REF_SeqName].extend(m)
+    return REF_SeqName_merged
+
+def mergeMotifSeq(motif_dict):
+    '''
+    motif_dict[REF_SeqName]={'+':start,'-':stop}
+    motif_dict={'+':start,'-':stop}
+    '''
+    MotifSeq_merge={'+':[],'-':[]}
+    for REF_SeqName in motif_dict.keys():
+        if motif_dict[REF_SeqName]:
+            MotifSeq_merge['+'].extend(motif_dict[REF_SeqName]['+'])
+            MotifSeq_merge['-'].extend(motif_dict[REF_SeqName]['-'])
+    return MotifSeq_merge
+
 def countSeqName(MergedSeqName):
     '''
     统计SeqName数目
@@ -328,6 +453,12 @@ def countSeqName(MergedSeqName):
     for motif in MergedSeqName.keys():
         SeqName_counts[motif]=len(MergedSeqName[motif])
     return SeqName_counts
+
+def avgDist(co_dict):
+    distances=[v.values()[0] for v in co_dict.values()]
+    distances=map(abs,distances)
+    avg_dist=sum(distances)/len(distances)
+    return avg_dist
 
 def distance():
     '''
@@ -379,17 +510,17 @@ def countAllSeqNameInDB(care):
     care.commit()
 
 def usage():
-    print "Stats.py -f <fasta_file> [-d] <dbfile> [-s]<seqname_list> [-m] <motif_list> [-p] pThresh [-o] <output>"
+    print "Stats.py -f <fasta_file> [-d] <dbfile> [-s]<seqname_list> [-m] <motif_list> [-r] co_dist_range=lower#higer [-p] pThresh [-o] <output>"
 
 def has_file(filename):
     if not os.path.exists(filename):
         raise Exception,"There is no %s here" % filename
 
 if __name__ == '__main__':
-    (seqname_list,motif_list,pThresh)=(None,None,None)
+    (seqname_list,motif_list,pThresh,co_dist_range)=(None,None,None,(10,300))
     try:
-        opts, args = getopt.getopt(sys.argv[1:], "hd:s:m:p:o:", \
-            ["help","database=","seqname_list=","motif_list=","pThresh","output="])
+        opts, args = getopt.getopt(sys.argv[1:], "hd:s:m:r:p:o:", \
+            ["help","database=","seqname_list=","motif_list=","co_dist_range=","pThresh=","output="])
     except getopt.GetoptError:
         usage()
         sys.exit(2)
@@ -410,6 +541,9 @@ if __name__ == '__main__':
             motif_list=arg
             has_file(motif_list)
             motif_list=loadList(motif_list)
+        elif opt in ("-r", "--co_dist_range"):
+            #arg=lower#higer
+            co_dist_range=map(int,arg.split("#"))
         elif opt in ("-p", "--pThresh"):
             pThresh=float(arg)
         elif opt in ("-o", "--output"):
@@ -420,5 +554,5 @@ if __name__ == '__main__':
         sys.exit(2)
     timestamp=time.time()
     #第一次执行的时候统计数据库中各类Motif对应的SeqName数量，以便看是否在给定列表中enrich
-    Stats(dbname, seqname_list, motif_list, pThresh, output)
+    Stats(dbname, seqname_list, motif_list, co_dist_range, pThresh, output)
     print time.time()-timestamp
