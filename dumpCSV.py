@@ -16,7 +16,7 @@ def dumpCSV(dbname,SeqName_list):
     Organism=invertDict(care.Organism)
 
     if SeqName_list:
-        REF_SeqName_list=[str(care.SeqName[sn]) for sn in SeqName_list]
+        REF_SeqName_list=[str(care.SeqName[sn]) for sn in SeqName_list if care.SeqName.has_key(sn)]
     else:
         REF_SeqName_list=None
     for rs in readSeqName(care,REF_SeqName_list):

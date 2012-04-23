@@ -66,7 +66,7 @@ def drawRmultidensity(Motif_Pos,outpath,col=False,top=None):
         geneplotter.multidensity(Pos.rx(names[:top]),lwd=3,xlab="Location")
     grdevices.dev_off()
 
-def drawRGraph(motif_dist,outpath):
+def drawRGraph(motif_dist,enriched,outpath):
     '''
     motif_dist[motif][MotifSeq]={'+':dist,'-':dist}
     '''
@@ -76,7 +76,7 @@ def drawRGraph(motif_dist,outpath):
     RColorBrewer = importr('RColorBrewer')
     xlim=robj.IntVector([-3000,0])
     ylim=robj.FloatVector([0,0.002])
-    for motif in motif_dist.keys():
+    for motif in enriched.keys():
         print motif
         if not motif_dist[motif]:
             print "empty"
@@ -119,28 +119,101 @@ def mergeList(motif_dict):
     [pos.extend(v) for v in motif_dict.values()]
     return pos
 
-def drawRbarplot(SeqName_counts,output):
+def drawRbarplot(SeqName_counts,enriched,output,top=25):
+    if not enriched:
+        return
     grdevices = importr('grDevices')
     graphics = importr('graphics')
     #SeqName_counts=robj.ListVector(SeqName_counts)
     counts=robj.IntVector(SeqName_counts.values())
     counts.names=robj.StrVector(SeqName_counts.keys())
-    #还有排序方面的问题
-    grdevices.png(file="%s/BarPlot.png" % output, width=512, height=512)
-    graphics.barplot(counts)
+    #counts=robj.r.sort(counts)
+    p=robj.FloatVector([enriched[motif]['p'] for motif in enriched.keys()])
+    p.names=robj.StrVector(enriched.keys())
+    #enriched_names=robj.StrVector(enriched.keys())
+    p=robj.r.sort(p,decreasing=True)
+    enriched_counts=counts.rx(p.names)
+    #top_counts=robj.r.tail(counts,n=top)
+    #print top_counts.r_repr()
+    grdevices.png(file="%s/%s_bar.png" % (output,output), width=512, height=512)
+    margin=robj.IntVector([3,9,4,2])
+    graphics.par(mar=margin)
+    bar=graphics.barplot(enriched_counts,main="Enriched motifs counts",horiz=True,las=1,col='lightblue')
+    graphics.text(x=enriched_counts,y=bar,label=robj.r.signif(p,digits=2),po=2) 
+    #graphics.text(bar,labels=top_counts,pos=4,offset=10)
     grdevices.dev_off()
 
+def drawRboxplot(Merged_dist,enriched,output):
+    grdevices = importr('grDevices')
+    graphics = importr('graphics')
+    #Merged_dist=dict([(k,list(v)) for k,v in Merged_dist.items()])
+    for motif in Merged_dist.keys():
+        Merged_dist[motif]=-robj.IntVector(Merged_dist[motif]).ro
+    Merged_dist=robj.ListVector(Merged_dist)
+    names=robj.r('names(sort(sapply(%s,length),decreasing=T))' % Merged_dist.r_repr())
+    enriched_names=robj.StrVector(enriched.keys())
+    grdevices.png(file="%s/%s_box.png" % (output,output), width=512, height=512)
+    margin=robj.IntVector([3,9,4,2])
+    graphics.par(mar=margin)
+    graphics.boxplot(Merged_dist.rx(enriched_names),main="Boxplot of Motif Positions",horizontal=True,las=1,col='lightblue')
+    grdevices.dev_off()
+
+def drawRCoocur(co_Occur,outpath):
+    '''
+    co_Occur[(motifa,motifb)][REF_SeqName]={(motifa_pos,motifb_pos):distance}
+    '''
+    for motif_pair in co_Occur.keys():
+        print motif_pair,len(co_Occur[motif_pair])
+        drawRdistance(co_Occur[motif_pair],outpath,motif_pair)
+        drawRCoDistibution(co_Occur[motif_pair],outpath,motif_pair)
+
+def drawRdistance(motif_pair,outpath,pair_name):
+    distances=[]
+    filename="&".join(pair_name).replace('/','_')
+    for REF_SeqName in motif_pair.keys():
+        distances.extend(motif_pair[REF_SeqName].values())
+    dist=robj.IntVector(distances)
+    grdevices = importr('grDevices')
+    graphics = importr('graphics')
+    grdevices.png(file="%s/%s_distance.png" % (outpath,filename), width=512, height=512)
+    graphics.hist(dist,breaks=50,border=4,main="Distance Histogram of \n%s" % "&".join(pair_name),xlab="Distances")
+    grdevices.dev_off()
+
+def drawRCoDistibution(motif_pair,outpath,pair_name):
+    motifA_pos=[]
+    motifB_pos=[]
+    filename="&".join(pair_name).replace('/','_')
+    (motifa,motifb)=pair_name
+    for REF_SeqName in motif_pair.keys():
+        #print motif_pair[REF_SeqName].keys()
+        for motifa_pos,motifb_pos in motif_pair[REF_SeqName].keys():
+            motifA_pos.append(motifa_pos)
+            motifB_pos.append(motifb_pos)
+            #print motifa_pos,motifb_pos
+    grdevices = importr('grDevices')
+    graphics = importr('graphics')
+    geneplotter = importr('geneplotter')
+    motifA_pos=-robj.IntVector(motifA_pos).ro
+    motifB_pos=-robj.IntVector(motifB_pos).ro
+    Pos={motifa:motifA_pos,motifb:motifB_pos}
+    Pos=robj.ListVector(Pos)
+    grdevices.png(file="%s/%s_distribution.png" % (outpath,filename), width=512, height=512)
+    geneplotter.multidensity(Pos.rx(),lwd=3,xlab="Distribution",main="Distribution of \n%s" % filename)
+    graphics.rug(motifA_pos,col=4)
+    graphics.rug(motifB_pos,col=2)
+    grdevices.dev_off()
 
 def usage():
-    print "CAREdb.py -f <zpkl> [-o] <output>"
+    print "CAREdb.py -z <zpkl> [-o] <output>"
 
 def has_file(filename):
     if not os.path.exists(filename):
         raise Exception,"There is no %s here" % filename
 
 if __name__ == '__main__':
+    co_dist_range=(10,300)
     try:
-        opts, args = getopt.getopt(sys.argv[1:], "hf:o:", ["help","filename=","output="])
+        opts, args = getopt.getopt(sys.argv[1:], "hz:o:t:r:", ["help","zpklfile=","output=","top=","co_dist_range="])
     except getopt.GetoptError:
         usage()
         sys.exit(2)
@@ -148,26 +221,43 @@ if __name__ == '__main__':
         if opt in ("-h", "--help"):
             usage()
             sys.exit()
-        elif opt in ("-f", "--filename"):
-            filename=arg
-            has_file(filename)
-            output=filename.split('.')[0]
+        elif opt in ("-z", "--zpklfile"):
+            zpklfile=arg
+            has_file(zpklfile)
+            output=zpklfile.split('.')[0]
+            top=25
         elif opt in ("-o", "--output"):
             output=arg
-    if not 'filename' in dir():
+        elif opt in ("-t", "--top="):
+            top=arg
+        elif opt in ("-r", "--co_dist_range"):
+            #arg=lower#higer
+            co_dist_range=tuple(map(int,arg.split("#")))
+    if not 'zpklfile' in dir():
         print "tell me filename please"
         usage()
         sys.exit(2)
     if not os.path.exists(output):
         os.makedirs(output)
+        os.makedirs("%s/Distribution" % output)
+        os.makedirs("%s/CoOccur" % output)
     timestamp=time.time()
-    zf = ZipFile(filename, 'r')
-    motif_dist = cPickle.loads(zf.open('motif_dist.pkl').read())
+    zf = ZipFile(zpklfile, 'r')
+    Merged_MotifSeq_dist = cPickle.loads(zf.open('Merged_MotifSeq_dist.pkl').read())
     SeqName_counts = cPickle.loads(zf.open('SeqName_counts.pkl').read())
+    Merged_dist=cPickle.loads(zf.open('Merged_dist.pkl').read())
+    enriched=cPickle.loads(zf.open('Enriched.pkl').read())
+    try:
+        co_Occur=cPickle.loads(zf.open('co_Occur_%s#%s.pkl' % co_dist_range).read())
+    except KeyError:
+        co_Occur=None
     zf.close()
     #drawRHist(Motif_Pos,outpath="%s/hist" % basename)
     #drawRDensity(Motif_Pos,outpath="%s/density" % basename)
     #drawRmultidensity(Motif_Pos,outpath=basename,top=5)
-    #drawRGraph(motif_dist,output)
-    drawRbarplot(SeqName_counts,output)
+    drawRGraph(Merged_MotifSeq_dist,enriched,"%s/Distribution" % output)
+    drawRbarplot(SeqName_counts,enriched,output,top)
+    drawRboxplot(Merged_dist,enriched,output)
+    if co_Occur:
+        drawRCoocur(co_Occur,"%s/CoOccur" % output)
     print time.time()-timestamp

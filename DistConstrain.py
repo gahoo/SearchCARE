@@ -10,7 +10,6 @@ from sqlite3 import OperationalError
 from math import log, exp, sqrt
 from mpmath import loggamma
 from zipfile import ZipFile, ZIP_DEFLATED
-from CAREdb import CAREdb
 from Stats import hypergeo_cdf,gauss_hypergeom,logchoose
 
 def getCoDist(distA,distB,lower,higer):
@@ -37,21 +36,20 @@ def constrainDist(REF_SeqName,co_Occur,edge,motif_dist,co_dist_range,p=None,base
     co_Occur_calibrated[(motifa,motifb)][REF_SeqName]={(motifa_pos,motifb_pos):distance}
     '''
     (lower,higer)=co_dist_range
-    edgefile="%s_coDist%d#%d.Edge" % (basename,lower,higer)
-    EdgeOutput=open(edgefile, 'w')
     Seq_num=len(REF_SeqName)
     co_Occur_calibrated={}
     calibrated_edge=[]
     for row in edge:
         (motifa,motifb,co_num,a_num,b_num,hypergeocdf)=row
         co_Occur_calibrated[(motifa,motifb)]={}
+        #print motifa,motifb
         for REF_SeqName in co_Occur[(motifa,motifb)]:
             distA=motif_dist[motifa][REF_SeqName]
             distB=motif_dist[motifb][REF_SeqName]
             #print motifa,motifb,REF_SeqName
             distances=getCoDist(distA,distB,lower,higer)
             if distances:
-            	print motifa,motifb,REF_SeqName,distances
+                #print motifa,motifb,REF_SeqName,distances
                 co_Occur_calibrated[(motifa,motifb)][REF_SeqName]=distances
         if not co_Occur_calibrated[(motifa,motifb)]:
             co_Occur_calibrated.pop((motifa,motifb))
@@ -61,14 +59,25 @@ def constrainDist(REF_SeqName,co_Occur,edge,motif_dist,co_dist_range,p=None,base
         try:
             hypergeocdf=hypergeo_cdf(co_num,a_num,b_num,Seq_num)
         except AssertionError:
-            print co_num,row
+            print co_num,row,Seq_num
+            co_Occur_calibrated.pop((motifa,motifb))
             continue
         if hypergeocdf<=p and co_num>=5:
             #row=(motifa,motifb,co_num,a_num,b_num,Seq_num,avg_dist,hypergeocdf)
             row=(motifa,motifb,co_num,a_num,b_num,hypergeocdf)
             calibrated_edge.append(row)
-    EdgeOutput.write("\n".join(["\t".join([str(col) for col in row]) for row in calibrated_edge]))
-    EdgeOutput.close()
+        else:
+            print (motifa,motifb,co_num,a_num,b_num,hypergeocdf)
+            co_Occur_calibrated.pop((motifa,motifb))
+
+    if calibrated_edge:
+        edgefile="%s_coDist%d#%d.Edge" % (basename,lower,higer)
+        EdgeOutput=open(edgefile, 'w')
+        EdgeOutput.write("\n".join(["\t".join([str(col) for col in row]) for row in calibrated_edge]))
+        EdgeOutput.close()
+    else:
+        print "no significant edges"
+        return
     return co_Occur_calibrated
 
 def usage():
@@ -94,10 +103,10 @@ if __name__ == '__main__':
             zpklfile=arg
             has_file(zpklfile)
             if not output:
-            	output=zpklfile.split('.')[0]
+                output=zpklfile.split('.')[0]
         elif opt in ("-r", "--co_dist_range"):
             #arg=lower#higer
-            co_dist_range=map(int,arg.split("#"))
+            co_dist_range=tuple(map(int,arg.split("#")))
         elif opt in ("-p", "--pThresh"):
             pThresh=float(arg)
         elif opt in ("-o", "--output"):
@@ -113,6 +122,10 @@ if __name__ == '__main__':
     co_Occur = cPickle.loads(zf.open('co_Occur.pkl').read())
     edge=cPickle.loads(zf.open('edge.pkl').read())
     Merged_REF_SeqName_dist=cPickle.loads(zf.open('Merged_REF_SeqName_dist.pkl').read())
-    constrainDist(REF_SeqName,co_Occur,edge,Merged_REF_SeqName_dist,co_dist_range,pThresh,output)
+    co_Occur_calibrated=constrainDist(REF_SeqName,co_Occur,edge,Merged_REF_SeqName_dist,co_dist_range,pThresh,output)
+    zf.close()
+    zf = ZipFile(zpklfile, 'a')
+    if co_Occur_calibrated:
+        zf.writestr('co_Occur_%s#%s.pkl' % co_dist_range , cPickle.dumps(co_Occur_calibrated))
     zf.close()
     print time.time()-timestamp

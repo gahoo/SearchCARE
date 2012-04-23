@@ -3,11 +3,12 @@
 import sys
 import os
 import time
+import getopt
 from CAREdb import CAREdb
 from subprocess import Popen,PIPE
 from zipfile import ZipFile, ZIP_DEFLATED
 
-def ScanMotif(Motif, fasta_file):
+def ScanMotif(Motif, fasta_file, bgfile):
     '''
     Motif:iupac格式的字符串
     fasta_file:待寻找的fasta文件
@@ -15,7 +16,11 @@ def ScanMotif(Motif, fasta_file):
     iupac2meme=Popen(args=['iupac2meme',Motif],stdout=PIPE)
     (motif,err)=iupac2meme.communicate()
     #iupac2meme.wait()
-    fimo=Popen(args=['fimo','--no-qvalue','-text','--output-pthresh','8e-5','--verbosity','1','-', fasta_file],stdin=PIPE,stdout=PIPE)
+    fimo_arg=['fimo']
+    if bgfile:
+        fimo_arg.extend(['--bgfile', bgfile])
+    fimo_arg.extend(['--no-qvalue','-text','--output-pthresh','8e-5','--verbosity','1','-', fasta_file])
+    fimo=Popen(args=fimo_arg,stdin=PIPE,stdout=PIPE)
     (result,err)=fimo.communicate(motif)
     #fimo.wait()
     basename=fasta_file.split('.')[0]
@@ -41,12 +46,11 @@ def loadMotifs(caredb):
     caredb.cur.execute(SQL)
     return caredb.cur.fetchall()
 
-def SearchCARE(filename):
+def SearchCARE(filename,dbname,bgfile):
     '''
     在序列中搜索顺式调控元件motif
     '''
-    basename=filename.split('.')[0]
-    dbname='%s.db' % basename
+    basename = filename.split('.')[0]
     if not os.path.exists(dbname):
         CARE=CAREdb(dbname)
         CARE.importMotifs('CARE.txt')
@@ -64,7 +68,7 @@ def SearchCARE(filename):
         if Sequence in scanned:
             print "skip"
             continue
-        CARE.addScanned(ScanMotif(Sequence,filename))
+        CARE.addScanned(ScanMotif(Sequence,filename,bgfile))
         scanned.append(Sequence)
         scanlog.write(Sequence+'\n')
 
@@ -90,15 +94,32 @@ def checkScannedLog(logfile):
     else:
         return []
 
-if __name__ == "__main__":
+def usage():
+    print "buildDB.py -i <fasta_file> [-d] <dbfile> [-b]<bgfile>"
+
+if __name__ == '__main__':
     try:
-        sys.argv[1]
-    except:
-        print "Tell me the filename please."
-        sys.exit()
-    if not os.path.exists(sys.argv[1]):
-        raise Exception,"There is no file name %s" % sys.argv[1]
-    basename=sys.argv[1].split('.')[0]
+        opts, args = getopt.getopt(sys.argv[1:], "hi:d:b:", ["help", "filename=", "database=", "bgfile="])
+    except getopt.GetoptError:
+        usage()
+        sys.exit(2)
+    for opt, arg in opts:
+        if opt in ("-h", "--help"):
+            usage()
+            sys.exit()
+        elif opt in ("-i", "--filename"):
+            filename = arg
+            if not os.path.exists(filename):
+                raise Exception,"There is no %s here" % filename
+            dbname = "%s.db" % filename.split('.')[0]
+            bgfile=None
+        elif opt in ("-d", "--database"):
+            dbname=arg
+        elif opt in ("-b", "--bgfile"):
+            bgfile = arg
+    if not 'dbname' in dir():
+        usage()
+        sys.exit(2)
     timestamp=time.time()
-    SearchCARE(sys.argv[1])
+    SearchCARE(filename,dbname,bgfile)
     print time.time()-timestamp

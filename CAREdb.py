@@ -79,6 +79,16 @@ class CAREdb(sqlitedb):
         CREATE TABLE FoundMotif (
             id INTEGER PRIMARY KEY,
             FoundMotif VARCHAR(120) NOT NULL UNIQUE)
+        """,
+        """
+        CREATE TABLE Motif_Counts(
+            REF_Motif INTEGER REFERENCES Motif(id) NOT NULL UNIQUE,
+            SeqName_counts  INTEGER NOT NULL)
+        """,
+        """
+        CREATE TABLE MotifSeq_Counts(
+            REF_MotifSeq INTEGER REFERENCES MotifSeq(id) NOT NULL UNIQUE,
+            SeqName_counts  INTEGER NOT NULL)
         """
         ]
 
@@ -120,6 +130,7 @@ class CAREdb(sqlitedb):
     MotifSeq={}
     SeqName={}
     FoundMotif={}
+    Motif_Counts={}
     dbfile=''
 
     def __init__(self, dbfile):
@@ -141,6 +152,7 @@ class CAREdb(sqlitedb):
             #self.FoundMotif=self.loadDB2dict('FoundMotif',1,0)
             self.Organism=self.loadDB2dict('Organism', 1, 0)
             self.Motif=self.loadDB2dict('Motif', 1, 0)
+            self.Motif_Counts=self.loadDB2dict('Motif_Counts', 0, 1)
             #self.Accession=self.loadDB2dict('Accession', 1, 0)
 
     def loadDB2dict(self, tname, kcol, vcol):
@@ -153,7 +165,8 @@ class CAREdb(sqlitedb):
         '''
         dic={}
         for rs in self.select(tname):
-            dic[rs[kcol].encode('gbk')]=rs[vcol]
+            #dic[rs[kcol].encode('gbk')]=rs[vcol]
+            dic[rs[kcol]]=rs[vcol]
         return dic.copy()
 
     def newDB(self, dbfile):

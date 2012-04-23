@@ -128,6 +128,7 @@ class sqlitedb:
         else:
             colums="*"
         if where:
+            raw_sql=None
             if where.has_key('SQL'):
                 raw_sql=where.pop('SQL')
             where=[k+" IN ('"+"','".join(v)+"')" for (k,v) in where.items()]

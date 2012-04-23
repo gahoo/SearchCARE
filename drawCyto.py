@@ -121,12 +121,12 @@ def setMappers(server,Nodes,Edges):
     #边的宽度与P值成反比，P越小线越粗
     server.Cytoscape.createContinuousMapper('default','Ps','Edge Line Width', \
                                             [float(min(Edges['Ps'])), float(max(Edges['Ps']))], \
-                                            [8.0,7.0,0.5,0.1])
+                                            [8.0,7.0,0.5,0.3])
     #边的颜色和共现次数co_nums成正比，颜色越深共现次数越多
     server.Cytoscape.createContinuousMapper('default','co_nums', \
                                             'Edge Color', \
                                             [float(min(Edges['co_nums'])), float(max(Edges['co_nums']))], \
-                                            ['#FFFFFF', '#FFFFFF', '#0000FF', '#0000FF'])
+                                            ['#FAFAFF', '#FAFAFF', '#0000FF', '#0000FF'])
 
 def saveNet(server,networkid,network_name):
     '''
@@ -136,10 +136,10 @@ def saveNet(server,networkid,network_name):
     node_cnt=server.Cytoscape.countNodes(networkid)
     scale=2+node_cnt/15.0
     #避免motif名称出边界
-    zoom=0.9*server.Cytoscape.getZoom(networkid)
+    zoom=0.8*server.Cytoscape.getZoom(networkid)
     server.Cytoscape.setZoom(networkid,zoom)
-    print network_name,scale,zoom
-    netfile="%s%s_Cyto" % (os.getcwd(),network_name)
+    netfile="%s/%s_Cyto" % (os.getcwd(),network_name)
+    print network_name,scale,zoom#,netfile
     #server.Cytoscape.saveNetwork(networkid,"%s.gml" % netfile)
     server.Cytoscape.executeCommand('network','export',{'file':"%s.xgmml" % netfile,'type':"xgmml"})
     server.Cytoscape.exportView(networkid,"%s.png" % netfile,"png",scale)
@@ -149,10 +149,14 @@ def subNetEnrichNodes(server,networkid,network_name,Nodes,layout,ER=1.0):
     节点富集率大于指定值的子网络
     '''
     enriched=[Nodes['motifs'][i] for i in range(len(Nodes['enrich_ratios'])) if Nodes['enrich_ratios'][i]>=ER]
+    #去掉那些虽然enrich但不在网络中的节点
+    all_nodes=server.Cytoscape.getNodes(networkid)
+    enriched=list(set(enriched)&set(all_nodes))
     server.Cytoscape.selectNodes(networkid,enriched)
     sub_networkid=server.Cytoscape.createNetworkFromSelection(networkid,"%s Nodes ER>%s" % (network_name,str(ER)))
     server.Cytoscape.performLayout(sub_networkid,layout)
-    saveNet(server,sub_networkid,"%s_ER%s" % (network_name,str(ER)))
+    if server.Cytoscape.countNodes(sub_networkid):
+        saveNet(server,sub_networkid,"%s_ER%s" % (network_name,str(ER)))
     server.Cytoscape.destroyNetwork(sub_networkid)
 
 def subNetSigEdges(server,networkid,network_name,Nodes,Edges,layout,pThresh):
@@ -177,7 +181,8 @@ def subNetSigEdges(server,networkid,network_name,Nodes,Edges,layout,pThresh):
     selectNodesBYEdges(server,tmp_networkid,remaining_edges)
     sub_networkid=server.Cytoscape.createNetworkFromSelection(tmp_networkid,"%s Edges P<%s" % (network_name,str(pThresh)))
     server.Cytoscape.performLayout(sub_networkid,layout)
-    saveNet(server,sub_networkid,"%s_EdgeP%s" % (network_name,str(pThresh)))
+    if server.Cytoscape.countNodes(sub_networkid):
+        saveNet(server,sub_networkid,"%s_EdgeP%s" % (network_name,str(pThresh)))
     server.Cytoscape.destroyNetwork(tmp_networkid)
     server.Cytoscape.destroyNetwork(sub_networkid)
 
@@ -203,7 +208,7 @@ def has_file(filename):
 if __name__ == '__main__':
     server = xmlrpclib.ServerProxy("http://localhost:9000")
     #init var
-    (network_name, layout, enrichratioThresh, pThresh)=(None,"Kamada-Kawai", 1.0, 0.001)
+    (network_name, layout, enrichratioThresh, pThresh)=(None,"kamada-kawai", 1.0, 0.001)
     try:
         server.Cytoscape.test()
     except:
