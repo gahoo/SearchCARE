@@ -75,6 +75,25 @@ def hypergeo_cdf_enrich(X, n, m, N):
         s += max(gauss_hypergeom(i, n, m, N), 0.0)
     return min(max(s,0.0), 1)
 
+def hypergeo_cdf_PAN(X, n, m, N):
+    '''
+    用来计算富集的p
+    N：数据库中基因总数
+    m：数据库中特定motif数
+    n：列表中基因总数
+    x：列表中特定motif数
+    '''
+    assert N >= m, 'Number of items %i must be larger than the number of marked items %i' % (N, m)
+    assert m >= X, 'Number of marked items %i must be larger than the number of sucesses %i' % (m, X)
+    assert n >= X, 'Number of draws %i must be larger than the number of sucesses %i' % (n, X)
+    assert N >= n, 'Number of draws %i must be smaller than the total number of items %i' % (n, N)
+    assert N-m >= n-X, 'There are more failures %i than unmarked items %i' % (N-m, n-X)
+
+    s = 0
+    for i in range(X, n+1):
+        s += max(gauss_hypergeom(i, n, m, N), 0.0)
+    return min(max(s,0.0), 1)
+
 def Stats(dbname, SeqName=None, Motifs=None, p=None, output=None, exact=False):
     '''
     统计Motif的数目，分布，共现情况
@@ -117,7 +136,8 @@ def Stats(dbname, SeqName=None, Motifs=None, p=None, output=None, exact=False):
     zf.writestr('MergedSeqName.pkl', cPickle.dumps(MergedSeqName))
     zf.writestr('Merged_REF_SeqName_dist.pkl', cPickle.dumps(Merged_REF_SeqName_dist))
     zf.writestr('SeqName_counts.pkl', cPickle.dumps(SeqName_counts))
-    (co_Occur,edge)=coOccur(care,REF_SeqName,SeqName_counts,MergedSeqName,p,output)
+    #(co_Occur,edge)=coOccur(care,REF_SeqName,SeqName_counts,MergedSeqName,p,output)
+    (co_Occur,edge)=coOccurPAN(care,REF_SeqName,SeqName_counts,MergedSeqName,p,output)
     zf.writestr('co_Occur.pkl', cPickle.dumps(co_Occur))
     zf.writestr('edge.pkl', cPickle.dumps(edge))
     zf.close()
@@ -298,6 +318,58 @@ def coOccur(care,REF_SeqName,SeqName_counts,MergedSeqName,p=None,output=None):
     EdgeOutput.close()
     return (co_Occur,edge)
 
+def coOccurPAN(care,REF_SeqName,SeqName_counts,MergedSeqName,p=None,output=None):
+    '''
+    共现的Motif
+    TODO 细化到具体的序列
+    TODO 考虑距离问题，若是距离大于某个值，就不算?
+    '''
+    if not output:
+        basename=care.dbfile.split('.')[0]
+    else:
+        basename=output
+    edgefile="%s.Edge" % basename
+    EdgeOutput=open(edgefile, 'w')
+    edge=[]
+    co_Occur={}
+    print "-------"
+    m_total_num=len(MergedSeqName)
+    list_size=len(REF_SeqName)
+    db_size=len(care.SeqName)
+    if not p:
+        p=0.001
+        #p=1.0/(m_total_num*(m_total_num-1))
+    for motifa in MergedSeqName.keys():
+        motifa_id=care.Motif[motifa]
+        motifA=MergedSeqName[motifa]
+        print len(MergedSeqName)
+        MergedSeqName.pop(motifa)
+        for motifb in MergedSeqName.keys():
+            motifb_id=care.Motif[motifb]
+            motifB=MergedSeqName[motifb]
+            co_Occur[(motifa,motifb)]=motifA&motifB
+            co_num=len(motifA&motifB)
+            try:
+                co_db=care.CoMotif_Counts[(motifa_id,motifb_id)]
+            except KeyError:
+                co_db=care.CoMotif_Counts[(motifb_id,motifa_id)]
+            if co_num:
+                try:
+                    hypergeocdf=hypergeo_cdf_PAN(co_num,list_size,co_db,db_size)
+                except AssertionError:
+                    hypergeocdf=1
+                    print motifa,motifb,co_num,list_size,co_db,db_size
+            else:
+                continue
+            #共现小于5已经没有任何意义，应该用Fisher精确检验
+            if hypergeocdf<=p and co_num>=5:
+                row=(motifa,motifb,co_num,list_size,co_db,hypergeocdf)
+                #print row
+                edge.append(row)
+    EdgeOutput.write("\n".join(["\t".join([str(col) for col in row]) for row in edge]))
+    EdgeOutput.close()
+    return (co_Occur,edge)
+
 def getMerged(motif_dict,type):
     '''
     合并Motif_SeqName结果，即把：
@@ -420,9 +492,16 @@ def checkMotif_Counts(care):
     检查数据库内Motif_Counts是否有内容，没有就统计
     '''
     if not care.Motif_Counts:
-        print "first stats"
+        print "first stats Motif counts"
         countAllSeqNameInDB(care)
         care.Motif_Counts=care.loadDB2dict('Motif_Counts',0,1)
+    
+    #在数据库中所有的共现统计
+    if not care.CoMotif_Counts:
+        print "first stats CoMotif counts"
+        countCoSeqnameInDB(care)
+        care.CoMotif_Counts=care.loadCoMotif()
+    
 
 def countAllSeqNameInDB(care):
     '''
@@ -443,6 +522,36 @@ def countAllSeqNameInDB(care):
     for REF_Motif in care.Motif.values():
         print REF_Motif
         care.cur.execute(SQL % (REF_Motif,REF_Motif))
+    care.commit()
+
+def countCoSeqnameInDB(care):
+    '''
+    统计数据库内全部Motif共现的Seqname数目
+    '''
+    SQL="""
+    SELECT DISTINCT REF_SeqName
+    FROM Scanned
+    WHERE REF_MotifSeq in (
+        SELECT DISTINCT REF_MotifSeq
+        FROM Instance
+        WHERE REF_Motif=%s)
+    """
+    REF_SeqNames={}
+    motifs=care.Motif.values()
+    for REF_Motif in motifs:
+        care.cur.execute(SQL % REF_Motif)
+        REF_SeqNames[REF_Motif]=set([rs[0] for rs in care.cur.fetchall()])
+        print REF_Motif,len(REF_SeqNames[REF_Motif])
+    SQL="""
+    INSERT INTO CoMotif_Counts
+    (REF_Motifa,REF_Motifb,SeqName_counts)
+    VALUES (%s,%s,%s)"""
+    for REF_Motifa in motifs:
+        for REF_Motifb in motifs[1:]:
+            print REF_Motifa,REF_Motifb
+            co_num=len(REF_SeqNames[REF_Motifa]&REF_SeqNames[REF_Motifb])
+            care.cur.execute(SQL % (REF_Motifa,REF_Motifb,co_num))
+        motifs=motifs[1:]
     care.commit()
 
 def usage():

@@ -89,6 +89,12 @@ class CAREdb(sqlitedb):
         CREATE TABLE MotifSeq_Counts(
             REF_MotifSeq INTEGER REFERENCES MotifSeq(id) NOT NULL UNIQUE,
             SeqName_counts  INTEGER NOT NULL)
+        """,
+        """
+        CREATE TABLE CoMotif_Counts(
+            REF_Motifa INTEGER REFERENCES Motif(id) NOT NULL,
+            REF_Motifb INTEGER REFERENCES Motif(id) NOT NULL,
+            SeqName_counts  INTEGER NOT NULL)
         """
         ]
 
@@ -131,6 +137,7 @@ class CAREdb(sqlitedb):
     SeqName={}
     FoundMotif={}
     Motif_Counts={}
+    CoMotif_Counts={}
     dbfile=''
 
     def __init__(self, dbfile):
@@ -153,6 +160,7 @@ class CAREdb(sqlitedb):
             self.Organism=self.loadDB2dict('Organism', 1, 0)
             self.Motif=self.loadDB2dict('Motif', 1, 0)
             self.Motif_Counts=self.loadDB2dict('Motif_Counts', 0, 1)
+            self.CoMotif_Counts=self.loadCoMotif()
             #self.Accession=self.loadDB2dict('Accession', 1, 0)
 
     def loadDB2dict(self, tname, kcol, vcol):
@@ -310,6 +318,15 @@ class CAREdb(sqlitedb):
         else:
             where=None
         self.select(table,colums,where,True)
+
+    def loadCoMotif(self):
+        '''
+        加载CoMotif至字典
+        '''
+        CoMotif_Counts={}
+        for REF_Motifa,REF_Motifb,SeqName_counts in self.select('CoMotif_Counts'):
+            CoMotif_Counts[(REF_Motifa,REF_Motifb)]=SeqName_counts
+        return CoMotif_Counts
 
 def iupac2sites(Sequence):
     '''

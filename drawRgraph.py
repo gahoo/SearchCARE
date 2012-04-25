@@ -202,6 +202,17 @@ def drawRCoDistibution(motif_pair,outpath,pair_name):
     graphics.rug(motifA_pos,col=4)
     graphics.rug(motifB_pos,col=2)
     grdevices.dev_off()
+    #Scatter plot
+    grdevices.png(file="%s/%s_Scatter.png" % (outpath,filename), width=512, height=512)
+    limit=robj.IntVector([-3000,0])
+    graphics.plot(motifA_pos,motifB_pos,main="Position Scatter Plot of\n%s&%s" % (motifa,motifb), \
+                    xlab="Positions of %s" % motifa, \
+                    ylab="Positions of %s" % motifb, \
+                    xlim=limit,ylim=limit)
+    graphics.abline(1,1)
+    grdevices.dev_off()
+
+
 
 def usage():
     print "CAREdb.py -z <zpkl> [-o] <output>"
@@ -239,7 +250,9 @@ if __name__ == '__main__':
         sys.exit(2)
     if not os.path.exists(output):
         os.makedirs(output)
-        os.makedirs("%s/Distribution" % output)
+    if not os.path.exists("%s/Enriched" % output):
+        os.makedirs("%s/Enriched" % output)
+    if not os.path.exists("%s/CoOccur" % output):
         os.makedirs("%s/CoOccur" % output)
     timestamp=time.time()
     zf = ZipFile(zpklfile, 'r')
@@ -255,7 +268,7 @@ if __name__ == '__main__':
     #drawRHist(Motif_Pos,outpath="%s/hist" % basename)
     #drawRDensity(Motif_Pos,outpath="%s/density" % basename)
     #drawRmultidensity(Motif_Pos,outpath=basename,top=5)
-    drawRGraph(Merged_MotifSeq_dist,enriched,"%s/Distribution" % output)
+    drawRGraph(Merged_MotifSeq_dist,enriched,"%s/Enriched" % output)
     drawRbarplot(SeqName_counts,enriched,output,top)
     drawRboxplot(Merged_dist,enriched,output)
     if co_Occur:
